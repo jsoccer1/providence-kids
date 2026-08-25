@@ -750,6 +750,38 @@ select:focus-visible {
   font-family: var(--font-body);
 }
 
+.date-combo {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.date-combo input[type="text"] { flex: 1; min-width: 0; }
+
+.date-picker-btn {
+  border: 1.5px solid var(--line);
+  background: var(--white);
+  border-radius: var(--radius-sm);
+  padding: 0 10px;
+  font-size: 1rem;
+  cursor: pointer;
+  line-height: 1;
+}
+.date-picker-btn:hover { background: #f1f0eb; }
+
+.date-picker-hidden {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 38px;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
+  border: 0;
+  padding: 0;
+}
+
 .age-preview {
   margin: 12px 0 0;
   font-size: 0.88rem;

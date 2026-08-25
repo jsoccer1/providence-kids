@@ -84,7 +84,14 @@
           </label>
           <label class="field">
             <span class="field-label">Birthdate <em>*</em></span>
-            <input type="date" id="childBirthdate" required>
+            <div class="date-combo">
+              <input type="text" id="childBirthdate" required placeholder="MM/DD/YYYY"
+                     inputmode="numeric" autocomplete="off" maxlength="10">
+              <button type="button" class="date-picker-btn" id="birthdatePickerBtn"
+                      aria-label="Open calendar">📅</button>
+              <input type="date" id="birthdatePicker" class="date-picker-hidden"
+                     tabindex="-1" aria-hidden="true">
+            </div>
           </label>
           <label class="field">
             <span class="field-label">Guardian name</span>
