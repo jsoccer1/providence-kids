@@ -1,0 +1,52 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Generate config.js from repository secrets (Settings → Secrets and
+      # variables → Actions). If the secrets are not set yet, the site
+      # deploys in offline demo mode.
+      - name: Write Supabase config
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_ANON_KEY" ]; then
+            {
+              echo "window.SUPABASE_URL = \"$SUPABASE_URL\";"
+              echo "window.SUPABASE_ANON_KEY = \"$SUPABASE_ANON_KEY\";"
+            } > config.js
+            echo "config.js written from secrets."
+          else
+            echo "// no supabase secrets configured" > config.js
+            echo "Secrets not set — deploying in demo mode."
+          fi
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
