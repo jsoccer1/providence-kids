@@ -42,14 +42,6 @@
     return Math.max(0, months);
   }
 
-  // Make a birthdate that is `months` months (and a few days) in the past.
-  function birthdateForAge(months, dayJitter) {
-    var d = new Date();
-    d.setMonth(d.getMonth() - months);
-    d.setDate(Math.max(1, d.getDate() - (dayJitter || 3)));
-    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
-  }
-
   function fmtDate(iso) {
     if (!iso) return "";
     var p = iso.split("-");
@@ -64,63 +56,6 @@
     return String(s == null ? "" : s)
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-  }
-
-  /* ---------- seed data ---------- */
-
-  function seedData() {
-    var classrooms = [
-      // Saturday — 2 classes
-      { id: "c_sat110", name: "Little Lambs",  day: "Saturday", room: "110", color: COLOR_CHOICES[0], minMonths: 0,  maxMonths: 36 },
-      { id: "c_sat120", name: "Kingdom Kids",  day: "Saturday", room: "120", color: COLOR_CHOICES[1], minMonths: 37, maxMonths: 72 },
-      // Sunday — 4 classes
-      { id: "c_sun110", name: "Nursery",       day: "Sunday",   room: "110", color: COLOR_CHOICES[2], minMonths: 0,  maxMonths: 18 },
-      { id: "c_sun120", name: "Toddlers",      day: "Sunday",   room: "120", color: COLOR_CHOICES[3], minMonths: 19, maxMonths: 36 },
-      { id: "c_sun130", name: "Preschool",     day: "Sunday",   room: "130", color: COLOR_CHOICES[4], minMonths: 37, maxMonths: 54 },
-      { id: "c_sun140", name: "Pre-K & Kinder", day: "Sunday",  room: "140", color: COLOR_CHOICES[5], minMonths: 55, maxMonths: 72 }
-    ];
-
-    // [name, ageMonths, classroomId|null, guardianName, guardianEmail, notes]
-    var kids = [
-      ["Ava Thompson",   6,  "c_sat110", "Rachel Thompson", "rachel.t@example.com",   "Peanut allergy — EpiPen in bag"],
-      ["Noah Williams",  9,  "c_sat110", "Chris Williams",  "chris.w@example.com",    ""],
-      ["Elijah Brooks",  15, "c_sat110", "Dana Brooks",     "dana.brooks@example.com", "Naps around 10:30"],
-      ["Sadie Nguyen",   33, "c_sat110", "Linh Nguyen",     "linh.n@example.com",     ""],
-      ["Ella Martin",    40, "c_sat120", "Beth Martin",     "beth.martin@example.com", "Only mom or grandma may pick up"],
-      ["Isaac Rivera",   52, "c_sat120", "Maria Rivera",    "maria.rivera@example.com", ""],
-      ["Ruby Hayes",     68, "c_sat120", "Tom Hayes",       "",                        "Wears glasses"],
-      ["Lily Chen",      11, "c_sun110", "Grace Chen",      "grace.chen@example.com", ""],
-      ["Mia Rodriguez",  18, "c_sun110", "Sofia Rodriguez", "sofia.r@example.com",    "Dairy sensitivity"],
-      ["John Smith",     24, "c_sun120", "Emily Smith",     "emily.smith@example.com", ""],
-      ["Harper Davis",   20, "c_sun120", "Kyle Davis",      "",                        ""],
-      ["Owen Patel",     28, "c_sun120", "Priya Patel",     "priya.patel@example.com", "First-time visitor 8/2026"],
-      ["Caleb Johnson",  36, "c_sun120", "Marcus Johnson",  "marcus.j@example.com",   ""],
-      ["Levi Anderson",  45, "c_sun130", "Paul Anderson",   "",                        "Shy at drop-off; warms up fast"],
-      ["Zoe Carter",     47, "c_sun130", "Renee Carter",    "renee.carter@example.com", ""],
-      ["Nora Bell",      57, "c_sun140", "Aaron Bell",      "aaron.bell@example.com", ""],
-      ["Micah Foster",   63, "c_sun140", "Jill Foster",     "jill.foster@example.com", "Sister Ruby is in Sat Room 120"],
-      // Unassigned
-      ["Grace Kim",      8,  null,       "Hannah Kim",      "hannah.kim@example.com", ""],
-      ["Jack Murphy",    22, null,       "Sean Murphy",     "sean.murphy@example.com", "Gluten-free snacks only"],
-      ["Chloe Bennett",  31, null,       "Amy Bennett",     "amy.bennett@example.com", ""],
-      ["Samuel Ortiz",   44, null,       "Luis Ortiz",      "luis.ortiz@example.com", ""],
-      ["Abigail Turner", 55, null,       "Kate Turner",     "",                        "New family — moved from Durham"],
-      ["Henry Walsh",    66, null,       "Megan Walsh",     "megan.walsh@example.com", ""]
-    ];
-
-    var children = kids.map(function (k, i) {
-      return {
-        id: "k_" + (i + 1),
-        name: k[0],
-        birthdate: birthdateForAge(k[1], (i % 9) + 2),
-        classroomId: k[2],
-        guardianName: k[3] || "",
-        guardianEmail: k[4] || "",
-        notes: k[5] || ""
-      };
-    });
-
-    return { classrooms: classrooms, children: children };
   }
 
   /* ---------- backend: Supabase (optional) ----------
@@ -187,17 +122,6 @@
         if (res[0].error || res[1].error) throw (res[0].error || res[1].error);
         var rooms = (res[0].data || []).map(rowToRoom);
         var kids = (res[1].data || []).map(rowToChild);
-        if (!rooms.length && !kids.length) {
-          // First run against an empty database: seed it once.
-          var seed = seedData();
-          self.state = seed;
-          return sb.from("classrooms").insert(seed.classrooms.map(roomToRow)).then(function (r1) {
-            if (r1.error) throw r1.error;
-            return sb.from("children").insert(seed.children.map(childToRow));
-          }).then(function (r2) {
-            if (r2.error) throw r2.error;
-          });
-        }
         self.state = { classrooms: rooms, children: kids };
       }).catch(function (err) {
         console.error("Supabase unavailable — falling back to local demo mode:", err);
@@ -223,9 +147,8 @@
             return;
           }
         }
-      } catch (e) { /* fall through to reseed */ }
-      this.state = seedData();
-      this.save();
+      } catch (e) { /* corrupt storage: start fresh */ }
+      this.state = { classrooms: [], children: [] };
     },
 
     save: function () {
@@ -233,11 +156,6 @@
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
       } catch (e) { /* storage unavailable: still works in-memory */ }
-    },
-
-    reset: function () {
-      this.state = seedData();
-      this.save();
     },
 
     classroom: function (id) {
@@ -480,13 +398,10 @@
 
     Store.onError = function (msg) { toast(msg, true); };
 
-    // Reset Demo Data only applies to the offline localStorage mode.
-    if (Store.mode === "supabase") {
-      document.getElementById("resetDemoBtn").style.display = "none";
-    } else {
+    if (Store.mode !== "supabase") {
       var note = document.createElement("p");
       note.className = "page-sub";
-      note.textContent = "Offline demo mode — add Supabase credentials in config.js to use the live database.";
+      note.textContent = "Not connected to Supabase — changes are saved to this browser only.";
       document.querySelector(".admin-toolbar div").appendChild(note);
     }
 
@@ -541,6 +456,13 @@
 
     function renderClassrooms() {
       grid.innerHTML = "";
+      if (!Store.state.classrooms.length) {
+        var empty = document.createElement("p");
+        empty.className = "empty-note";
+        empty.textContent = "No classrooms yet. Click “+ Add Classroom” to create your first one.";
+        grid.appendChild(empty);
+        return;
+      }
       var days = [];
       Store.state.classrooms.forEach(function (c) {
         var d = c.day || "Sunday";
@@ -1017,15 +939,6 @@
       openClassroomModal(room.id);
     });
 
-    /* ---------- reset ---------- */
-
-    document.getElementById("resetDemoBtn").addEventListener("click", function () {
-      if (!confirm("Reset the demo? All changes will be replaced with the original sample data.")) return;
-      Store.reset();
-      searchInput.value = "";
-      render();
-      toast("Demo data restored");
-    });
 
     render();
   }

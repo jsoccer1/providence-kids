@@ -9,8 +9,8 @@ Children's classroom management for Providence Church. Plain HTML/CSS/JS fronten
 
 ## Modes
 
-- **With Supabase configured** — all data lives in your Supabase project. Every change (drag, edit, add, delete) writes through immediately. The first load against an empty database seeds sample data automatically.
-- **Without Supabase** — the app runs in offline demo mode using localStorage, with a note in the admin header and a Reset Demo Data button.
+- **With Supabase configured** — all data lives in your Supabase project. Every change (drag, edit, add, delete) writes through immediately. The database starts empty; add classrooms and children from the admin dashboard.
+- **Without Supabase** — the app falls back to saving in the current browser only (localStorage), with a note in the admin header.
 
 ## Deploy to GitHub Pages
 
