@@ -1,0 +1,5 @@
+// Supabase credentials — anon (public) key only.
+// Access control comes from Row Level Security, not from hiding this key.
+
+window.SUPABASE_URL = "https://YOUR-PROJECT-REF.supabase.co";
+window.SUPABASE_ANON_KEY = "YOUR-ANON-PUBLIC-KEY";
