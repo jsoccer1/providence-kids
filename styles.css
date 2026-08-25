@@ -864,3 +864,135 @@ select:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* ---------- Mode tabs (birthday vs age lookup) ---------- */
+
+.mode-tabs {
+  display: flex;
+  gap: 6px;
+  background: #f0efe9;
+  border-radius: var(--radius-sm);
+  padding: 4px;
+  margin-bottom: 16px;
+}
+
+.mode-tab {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.88rem;
+  padding: 9px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.mode-tab-active {
+  background: var(--white);
+  color: var(--navy);
+  box-shadow: 0 1px 3px rgba(19, 31, 56, 0.14);
+}
+
+.field-wrap[hidden] { display: none; }
+
+/* ---------- Settings panel: Day / Time sliders ---------- */
+
+.settings-panel {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1.5px solid var(--line);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.setting-group { min-width: 0; }
+
+.range-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--line);
+  outline: none;
+  cursor: pointer;
+  margin: 6px 0 4px;
+}
+
+.range-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--navy);
+  border: 3px solid var(--white);
+  box-shadow: 0 1px 4px rgba(19, 31, 56, 0.4);
+  cursor: pointer;
+}
+
+.range-slider::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--navy);
+  border: 3px solid var(--white);
+  box-shadow: 0 1px 4px rgba(19, 31, 56, 0.4);
+  cursor: pointer;
+}
+
+.range-slider:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.slider-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+
+.slider-labels span { transition: color 0.15s ease; }
+.slider-label-active { color: var(--navy); }
+
+/* ---------- Class note tag (younger / older) ---------- */
+
+.class-note-tag {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  background: #f0efe9;
+  border-radius: 99px;
+  padding: 2px 8px;
+  vertical-align: middle;
+  margin-left: 2px;
+}
+
+/* ---------- Highlighted class match ---------- */
+
+.public-class-card.highlight {
+  box-shadow: 0 0 0 3px var(--gold), var(--shadow-lift);
+  animation: pop-in 0.25s ease;
+}
+
+/* ---------- Admin: time sub-heading ---------- */
+
+.time-heading {
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  margin: 14px 0 10px;
+}
+
+@media (max-width: 620px) {
+  .settings-panel { grid-template-columns: 1fr; }
+}

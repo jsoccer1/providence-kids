@@ -1,51 +1,44 @@
--- Providence Kids — Supabase schema
--- Run this in the Supabase SQL Editor (Dashboard → SQL Editor → New query).
+-- ============================================================
+-- Providence Kids — Class Finder schema
+-- ============================================================
+-- This REPLACES the old roster-based schema. Children are no longer
+-- stored anywhere — this is a pure "birthday -> classroom" lookup
+-- tool. Staff pick a service (day + time), enter a birthday or age,
+-- and the app finds the classroom whose date range covers it.
+--
+-- ⚠️ RUN THIS ONCE IN THE SUPABASE SQL EDITOR. It drops the old
+-- `children` table and rebuilds `classrooms` with a new shape.
+-- Any names/notes/guardian info previously stored in `children`
+-- will be permanently deleted. Classroom age-band edits you made
+-- in the old admin page will also be gone (replaced by the seed
+-- data in seed_classes.sql, which you should run right after this).
+-- ============================================================
 
-create table if not exists classrooms (
-  id          text primary key,
-  name        text not null,
-  day         text not null default 'Sunday',
-  room        text not null default 'TBD',
-  color       text not null default '#c9973a',
-  min_months  integer not null default 0,
-  max_months  integer not null default 12,
-  created_at  timestamptz not null default now()
+drop table if exists children;
+drop table if exists classrooms;
+
+create table classrooms (
+  id            text primary key,
+  name          text not null,
+  day           text not null default 'Sunday',      -- 'Saturday' | 'Sunday'
+  time          text not null default '8:00 AM',      -- e.g. '8:00 AM', '9:30 AM', '11:10 AM'
+  room          text not null default 'TBD',
+  color         text not null default '#c9973a',
+  min_birthdate date,                                  -- inclusive lower bound; null = no lower bound
+  max_birthdate date,                                  -- inclusive upper bound; null = open-ended (newest babies)
+  note          text not null default '',              -- e.g. 'younger', 'older'
+  created_at    timestamptz not null default now()
 );
 
-create table if not exists children (
-  id             text primary key,
-  name           text not null,
-  birthdate      date not null,
-  guardian_name  text not null default '',
-  guardian_email text not null default '',
-  notes          text not null default '',
-  classroom_id   text references classrooms(id) on delete set null,
-  created_at     timestamptz not null default now()
-);
+create index classrooms_day_time_idx on classrooms (day, time);
 
-create index if not exists children_classroom_idx on children (classroom_id);
-
--- Row Level Security
 alter table classrooms enable row level security;
-alter table children enable row level security;
 
--- ⚠️ TEMPORARY OPEN POLICIES ⚠️
--- These allow anyone with the anon key (i.e. anyone visiting the site)
--- to read AND write both tables. That is fine while you are testing,
--- but before entering real children's information you should add
--- Supabase Auth and replace these with authenticated-only policies.
-
+-- Open policies: no personal/child data lives in this table, so it's
+-- reasonable for the anon (public) key to read + write it without a
+-- login. If you later want the admin page login-gated, add Supabase
+-- Auth and swap these for `using (auth.role() = 'authenticated')`.
 create policy "anon read classrooms"   on classrooms for select using (true);
 create policy "anon write classrooms"  on classrooms for insert with check (true);
 create policy "anon update classrooms" on classrooms for update using (true);
 create policy "anon delete classrooms" on classrooms for delete using (true);
-
-create policy "anon read children"   on children for select using (true);
-create policy "anon write children"  on children for insert with check (true);
-create policy "anon update children" on children for update using (true);
-create policy "anon delete children" on children for delete using (true);
-
--- When you add auth later, drop the policies above and use e.g.:
---   create policy "authed all" on children for all
---     using (auth.role() = 'authenticated')
---     with check (auth.role() = 'authenticated');

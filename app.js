@@ -1,51 +1,69 @@
 /* ============================================================
-   Providence Kids — demo app
-   Plain JavaScript + localStorage. No frameworks, no backend.
-   Designed so the data layer (Store) can be swapped for
-   Supabase later without touching the UI code much.
+   Providence Kids — Class Finder
+   Plain JavaScript. No frameworks.
+   Staff enter a child's birthday (or age in months) plus which
+   service (day + time) they're attending, and the app looks up
+   the matching classroom from date-range definitions. No child
+   records are stored — this is a lookup tool, not a roster.
+   Data layer (Store) swaps between Supabase and localStorage.
    ============================================================ */
 
 (function () {
   "use strict";
 
-  var STORAGE_KEY = "providenceKidsDemo.v2";
-  var CAPACITY = 12;
+  var STORAGE_KEY = "providenceKidsClassFinder.v3";
 
   var COLOR_CHOICES = [
-    "#d96c5f", // coral
-    "#dfa03c", // amber
-    "#6ba368", // green
-    "#4e9bb0", // teal
-    "#5b76c4", // blue
-    "#9b6bc4", // violet
-    "#c05f8f", // rose
-    "#7a8a5a"  // olive
+    "#d96c5f", "#dfa03c", "#6ba368", "#4e9bb0",
+    "#5b76c4", "#9b6bc4", "#c05f8f", "#7a8a5a"
   ];
 
-  /* ---------- date helpers ---------- */
+  var DAYS = ["Saturday", "Sunday"];
+
+  /* ---------- date / time helpers ---------- */
+
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
 
   function todayISO() {
     var d = new Date();
     return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
   }
 
-  function pad2(n) { return (n < 10 ? "0" : "") + n; }
-
-  // Birthdate string "YYYY-MM-DD" -> whole months old (never negative).
-  function monthsOld(birthdate) {
-    if (!birthdate) return 0;
-    var parts = birthdate.split("-").map(Number);
-    var b = new Date(parts[0], parts[1] - 1, parts[2]);
-    var now = new Date();
-    var months = (now.getFullYear() - b.getFullYear()) * 12 + (now.getMonth() - b.getMonth());
-    if (now.getDate() < b.getDate()) months -= 1;
-    return Math.max(0, months);
+  // Age in whole months -> approximate birthdate (YYYY-MM-DD), today minus N months.
+  function birthdateFromAgeMonths(months) {
+    var d = new Date();
+    d.setDate(1); // avoid month-overflow edge cases (e.g. Mar 31 - 1mo)
+    d.setMonth(d.getMonth() - months);
+    var today = new Date();
+    d.setDate(Math.min(today.getDate(), daysInMonth(d.getFullYear(), d.getMonth())));
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
   }
 
-  function fmtDate(iso) {
+  function daysInMonth(year, monthIndex0) {
+    return new Date(year, monthIndex0 + 1, 0).getDate();
+  }
+
+  function fmtDateNice(iso) {
     if (!iso) return "";
-    var p = iso.split("-");
-    return p[1] + "/" + p[2] + "/" + p[0];
+    var p = iso.split("-").map(Number);
+    var d = new Date(p[0], p[1] - 1, p[2]);
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  }
+
+  function fmtDateShort(iso) {
+    if (!iso) return "";
+    var p = iso.split("-").map(Number);
+    var d = new Date(p[0], p[1] - 1, p[2]);
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  }
+
+  // "9:30 AM" -> 570 (minutes since midnight), for sorting/comparison.
+  function timeToMinutes(label) {
+    var m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec((label || "").trim());
+    if (!m) return 0;
+    var h = parseInt(m[1], 10) % 12;
+    if (/pm/i.test(m[3])) h += 12;
+    return h * 60 + parseInt(m[2], 10);
   }
 
   function uid(prefix) {
@@ -58,10 +76,46 @@
       .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
+  // Detects { day, time } to default the sliders to on page load.
+  // Uses America/New_York since the church is in Raleigh, NC.
+  function detectServiceDefault(availableTimesByDay) {
+    var now = new Date();
+    var parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      weekday: "long", hour: "numeric", minute: "numeric", hour12: false
+    }).formatToParts(now);
+    var map = {};
+    parts.forEach(function (p) { map[p.type] = p.value; });
+    var weekday = map.weekday;
+    var minutesNow = parseInt(map.hour, 10) * 60 + parseInt(map.minute, 10);
+
+    var day = (weekday === "Saturday" || weekday === "Sunday") ? weekday : "Sunday";
+    var forceDefaultTime = (weekday !== "Saturday" && weekday !== "Sunday");
+
+    var times = (availableTimesByDay && availableTimesByDay[day]) || [];
+    if (!times.length) return { day: day, time: null };
+
+    if (forceDefaultTime) {
+      return { day: day, time: times[0] };
+    }
+
+    // Pick the slot whose window contains the current time: boundaries
+    // sit halfway between each pair of consecutive service start times.
+    var sorted = times.slice().sort(function (a, b) { return timeToMinutes(a) - timeToMinutes(b); });
+    var chosen = sorted[0];
+    for (var i = 0; i < sorted.length; i++) {
+      var startMin = timeToMinutes(sorted[i]);
+      var nextStart = (i + 1 < sorted.length) ? timeToMinutes(sorted[i + 1]) : Infinity;
+      var boundary = (nextStart === Infinity) ? Infinity : (startMin + nextStart) / 2;
+      if (minutesNow < boundary) { chosen = sorted[i]; break; }
+      chosen = sorted[i];
+    }
+    return { day: day, time: chosen };
+  }
+
   /* ---------- backend: Supabase (optional) ----------
-     If config.js defines SUPABASE_URL + SUPABASE_ANON_KEY, all data
-     lives in Supabase. Otherwise the app falls back to a local
-     demo mode backed by localStorage. */
+     If config.js defines SUPABASE_URL + SUPABASE_ANON_KEY, classroom
+     definitions live in Supabase. Otherwise falls back to localStorage. */
 
   var sb = null;
   try {
@@ -72,25 +126,20 @@
   } catch (e) { sb = null; }
 
   function rowToRoom(r) {
-    return { id: r.id, name: r.name, day: r.day, room: r.room, color: r.color,
-             minMonths: r.min_months, maxMonths: r.max_months };
+    return {
+      id: r.id, name: r.name, day: r.day, time: r.time, room: r.room, color: r.color,
+      minBirthdate: r.min_birthdate || null, maxBirthdate: r.max_birthdate || null,
+      note: r.note || ""
+    };
   }
   function roomToRow(c) {
-    return { id: c.id, name: c.name, day: c.day, room: c.room, color: c.color,
-             min_months: c.minMonths, max_months: c.maxMonths };
-  }
-  function rowToChild(r) {
-    return { id: r.id, name: r.name, birthdate: r.birthdate,
-             guardianName: r.guardian_name || "", guardianEmail: r.guardian_email || "",
-             notes: r.notes || "", classroomId: r.classroom_id || null };
-  }
-  function childToRow(k) {
-    return { id: k.id, name: k.name, birthdate: k.birthdate,
-             guardian_name: k.guardianName || "", guardian_email: k.guardianEmail || "",
-             notes: k.notes || "", classroom_id: k.classroomId || null };
+    return {
+      id: c.id, name: c.name, day: c.day, time: c.time, room: c.room, color: c.color,
+      min_birthdate: c.minBirthdate || null, max_birthdate: c.maxBirthdate || null,
+      note: c.note || ""
+    };
   }
 
-  // Fire-and-forget remote write with error surfacing.
   function rq(promise) {
     promise.then(function (res) {
       if (res && res.error) {
@@ -100,10 +149,54 @@
     });
   }
 
+  /* ---------- seed data (real 2026–2027 Sunday class assignments) ---------- */
+
+  function seedData() {
+    function c(id, name, day, time, room, color, minB, maxB, note) {
+      return { id: id, name: name, day: day, time: time, room: room, color: color,
+        minBirthdate: minB, maxBirthdate: maxB, note: note || "" };
+    }
+    return [
+      // ---- Sunday · 8:00 AM ----
+      c("s8_107", "Nursery", "Sunday", "8:00 AM", "107", COLOR_CHOICES[0], "2025-10-02", null),
+      c("s8_111", "Nursery", "Sunday", "8:00 AM", "111", COLOR_CHOICES[1], "2025-06-01", "2025-09-30"),
+      c("s8_117", "Nursery", "Sunday", "8:00 AM", "117", COLOR_CHOICES[2], "2025-01-01", "2025-05-31"),
+      c("s8_120", "Nursery", "Sunday", "8:00 AM", "120", COLOR_CHOICES[3], "2024-09-01", "2024-12-31"),
+      c("s8_125", "Twos",    "Sunday", "8:00 AM", "125", COLOR_CHOICES[4], "2023-09-01", "2024-08-31"),
+      c("s8_149", "Threes",  "Sunday", "8:00 AM", "149", COLOR_CHOICES[5], "2022-09-01", "2023-08-31"),
+      c("s8_154", "Fours",   "Sunday", "8:00 AM", "154", COLOR_CHOICES[6], "2021-09-01", "2022-08-31"),
+
+      // ---- Sunday · 9:30 AM ----
+      c("s93_103", "Nursery", "Sunday", "9:30 AM", "103", COLOR_CHOICES[0], "2026-01-02", null),
+      c("s93_107", "Nursery", "Sunday", "9:30 AM", "107", COLOR_CHOICES[1], "2025-08-01", "2025-12-31"),
+      c("s93_110", "Nursery", "Sunday", "9:30 AM", "110", COLOR_CHOICES[2], "2025-04-01", "2025-07-31"),
+      c("s93_111", "Nursery", "Sunday", "9:30 AM", "111", COLOR_CHOICES[3], "2025-01-01", "2025-03-31"),
+      c("s93_117", "Nursery", "Sunday", "9:30 AM", "117", COLOR_CHOICES[4], "2024-11-01", "2024-12-31"),
+      c("s93_120", "Nursery", "Sunday", "9:30 AM", "120", COLOR_CHOICES[5], "2024-09-01", "2024-10-31"),
+      c("s93_143", "Twos",    "Sunday", "9:30 AM", "143", COLOR_CHOICES[6], "2024-03-01", "2024-08-31", "younger"),
+      c("s93_147", "Twos",    "Sunday", "9:30 AM", "147", COLOR_CHOICES[7], "2023-09-01", "2024-02-28", "older"),
+      c("s93_152", "Threes",  "Sunday", "9:30 AM", "152", COLOR_CHOICES[0], "2023-03-01", "2023-08-31", "younger"),
+      c("s93_154", "Threes",  "Sunday", "9:30 AM", "154", COLOR_CHOICES[1], "2022-09-01", "2023-02-28", "older"),
+      c("s93_164", "Fours",   "Sunday", "9:30 AM", "164", COLOR_CHOICES[2], "2022-03-01", "2022-08-31", "younger"),
+      c("s93_166", "Fours",   "Sunday", "9:30 AM", "166", COLOR_CHOICES[3], "2021-09-01", "2022-02-28", "older"),
+
+      // ---- Sunday · 11:10 AM ----
+      c("s1110_103", "Nursery", "Sunday", "11:10 AM", "103", COLOR_CHOICES[0], "2025-11-02", null),
+      c("s1110_110", "Nursery", "Sunday", "11:10 AM", "110", COLOR_CHOICES[1], "2025-05-01", "2025-10-31"),
+      c("s1110_120", "Nursery", "Sunday", "11:10 AM", "120", COLOR_CHOICES[2], "2024-09-01", "2025-04-30"),
+      c("s1110_147", "Twos",    "Sunday", "11:10 AM", "147", COLOR_CHOICES[3], "2023-09-01", "2024-08-31"),
+      c("s1110_154", "Threes",  "Sunday", "11:10 AM", "154", COLOR_CHOICES[4], "2022-09-01", "2023-08-31"),
+      c("s1110_164", "Fours",   "Sunday", "11:10 AM", "164", COLOR_CHOICES[5], "2021-09-01", "2022-08-31")
+
+      // No Saturday sheet was provided yet — add Saturday classrooms from
+      // the admin page (⚙ Add Classroom) once that schedule is available.
+    ];
+  }
+
   /* ---------- store ---------- */
 
   var Store = {
-    state: null,
+    state: null, // { classrooms: [...] }
     mode: "local",
     onError: null,
 
@@ -115,14 +208,9 @@
         return Promise.resolve();
       }
       self.mode = "supabase";
-      return Promise.all([
-        sb.from("classrooms").select("*"),
-        sb.from("children").select("*")
-      ]).then(function (res) {
-        if (res[0].error || res[1].error) throw (res[0].error || res[1].error);
-        var rooms = (res[0].data || []).map(rowToRoom);
-        var kids = (res[1].data || []).map(rowToChild);
-        self.state = { classrooms: rooms, children: kids };
+      return sb.from("classrooms").select("*").then(function (res) {
+        if (res.error) throw res.error;
+        self.state = { classrooms: (res.data || []).map(rowToRoom) };
       }).catch(function (err) {
         console.error("Supabase unavailable — falling back to local demo mode:", err);
         sb = null;
@@ -136,23 +224,18 @@
         var raw = localStorage.getItem(STORAGE_KEY);
         if (raw) {
           var parsed = JSON.parse(raw);
-          if (parsed && Array.isArray(parsed.classrooms) && Array.isArray(parsed.children)) {
-            // Light migration for data saved before notes/day/room existed
-            parsed.children.forEach(function (k) { if (k.notes === undefined) k.notes = ""; });
-            parsed.classrooms.forEach(function (c) {
-              if (!c.day) c.day = "Sunday";
-              if (!c.room) c.room = "TBD";
-            });
+          if (parsed && Array.isArray(parsed.classrooms)) {
             this.state = parsed;
             return;
           }
         }
       } catch (e) { /* corrupt storage: start fresh */ }
-      this.state = { classrooms: [], children: [] };
+      this.state = { classrooms: seedData() };
+      this.save();
     },
 
     save: function () {
-      if (this.mode !== "local") return; // Supabase mode writes per-operation
+      if (this.mode !== "local") return;
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
       } catch (e) { /* storage unavailable: still works in-memory */ }
@@ -162,93 +245,44 @@
       return this.state.classrooms.find(function (c) { return c.id === id; }) || null;
     },
 
-    child: function (id) {
-      return this.state.children.find(function (k) { return k.id === id; }) || null;
+    availableTimesByDay: function () {
+      var map = {};
+      DAYS.forEach(function (d) { map[d] = []; });
+      this.state.classrooms.forEach(function (c) {
+        if (!map[c.day]) map[c.day] = [];
+        if (map[c.day].indexOf(c.time) === -1) map[c.day].push(c.time);
+      });
+      Object.keys(map).forEach(function (d) {
+        map[d].sort(function (a, b) { return timeToMinutes(a) - timeToMinutes(b); });
+      });
+      return map;
     },
 
-    childrenIn: function (classroomId) {
-      return this.state.children.filter(function (k) { return k.classroomId === classroomId; });
+    classroomsFor: function (day, time) {
+      return this.state.classrooms
+        .filter(function (c) { return c.day === day && c.time === time; })
+        .sort(function (a, b) {
+          var am = a.minBirthdate || "0000-00-00", bm = b.minBirthdate || "0000-00-00";
+          return bm.localeCompare(am); // oldest birthdate range (youngest class... ) — see below
+        });
     },
 
-    unassigned: function () {
-      return this.state.children.filter(function (k) { return !k.classroomId; });
-    },
-
-    classForAge: function (months) {
+    // Given ISO birthdate, find the matching classroom for a day+time.
+    classForBirthdate: function (day, time, birthdateISO) {
       return this.state.classrooms.find(function (c) {
-        return months >= c.minMonths && months <= c.maxMonths;
+        if (c.day !== day || c.time !== time) return false;
+        if (c.minBirthdate && birthdateISO < c.minBirthdate) return false;
+        if (c.maxBirthdate && birthdateISO > c.maxBirthdate) return false;
+        return true;
       }) || null;
-    },
-
-    moveChild: function (childId, classroomId) {
-      var kid = this.child(childId);
-      if (!kid) return { ok: false, message: "Child not found." };
-      if (classroomId) {
-        var room = this.classroom(classroomId);
-        if (!room) return { ok: false, message: "Classroom not found." };
-        if (kid.classroomId !== classroomId && this.childrenIn(classroomId).length >= CAPACITY) {
-          return { ok: false, message: room.name + " is full (" + CAPACITY + "/" + CAPACITY + ")." };
-        }
-      }
-      kid.classroomId = classroomId || null;
-      this.save();
-      if (sb) rq(sb.from("children").update({ classroom_id: kid.classroomId }).eq("id", kid.id));
-      return { ok: true };
-    },
-
-    addChild: function (data) {
-      var kid = {
-        id: uid("k"),
-        name: data.name,
-        birthdate: data.birthdate,
-        guardianName: data.guardianName || "",
-        guardianEmail: data.guardianEmail || "",
-        notes: data.notes || "",
-        classroomId: null
-      };
-      this.state.children.push(kid);
-      this.save();
-      if (sb) rq(sb.from("children").insert(childToRow(kid)));
-      if (data.classroomId) {
-        var res = this.moveChild(kid.id, data.classroomId);
-        if (!res.ok) return { ok: true, kid: kid, warning: res.message + " Saved as Unassigned." };
-      }
-      return { ok: true, kid: kid };
-    },
-
-    updateChild: function (id, data) {
-      var kid = this.child(id);
-      if (!kid) return { ok: false, message: "Child not found." };
-      kid.name = data.name;
-      kid.birthdate = data.birthdate;
-      kid.guardianName = data.guardianName || "";
-      kid.guardianEmail = data.guardianEmail || "";
-      kid.notes = data.notes || "";
-      this.save();
-      if (sb) {
-        rq(sb.from("children").update({
-          name: kid.name, birthdate: kid.birthdate,
-          guardian_name: kid.guardianName, guardian_email: kid.guardianEmail,
-          notes: kid.notes
-        }).eq("id", kid.id));
-      }
-      if ((data.classroomId || null) !== (kid.classroomId || null)) {
-        var res = this.moveChild(id, data.classroomId);
-        if (!res.ok) return { ok: true, warning: res.message + " Classroom unchanged." };
-      }
-      return { ok: true };
     },
 
     addClassroom: function () {
       var n = this.state.classrooms.length + 1;
       var room = {
-        id: uid("c"),
-        name: "New Classroom " + n,
-        day: "Sunday",
-        room: "TBD",
+        id: uid("c"), name: "New Classroom", day: "Sunday", time: "8:00 AM", room: "TBD",
         color: COLOR_CHOICES[(n - 1) % COLOR_CHOICES.length],
-        minMonths: 0,
-        maxMonths: 12
+        minBirthdate: null, maxBirthdate: null, note: ""
       };
       this.state.classrooms.push(room);
       this.save();
@@ -261,586 +295,282 @@
       if (!room) return { ok: false, message: "Classroom not found." };
       room.name = data.name;
       room.day = data.day;
+      room.time = data.time;
       room.room = data.room;
       room.color = data.color;
-      room.minMonths = data.minMonths;
-      room.maxMonths = data.maxMonths;
+      room.minBirthdate = data.minBirthdate || null;
+      room.maxBirthdate = data.maxBirthdate || null;
+      room.note = data.note || "";
       this.save();
-      if (sb) rq(sb.from("classrooms").update(roomToRow(room)).eq("id", room.id));
+      if (sb) rq(sb.from("classrooms").update(roomToRow(room)).eq("id", id));
       return { ok: true };
     },
 
     removeClassroom: function (id) {
-      // Children are kept — moved to Unassigned first.
-      this.state.children.forEach(function (k) {
-        if (k.classroomId === id) k.classroomId = null;
-      });
       this.state.classrooms = this.state.classrooms.filter(function (c) { return c.id !== id; });
       this.save();
-      if (sb) {
-        sb.from("children").update({ classroom_id: null }).eq("classroom_id", id).then(function (r1) {
-          if (r1.error) {
-            console.error("Supabase write failed:", r1.error);
-            if (Store.onError) Store.onError("Sync failed — change may not be saved.");
-            return;
-          }
-          rq(sb.from("classrooms").delete().eq("id", id));
-        });
-      }
+      if (sb) rq(sb.from("classrooms").delete().eq("id", id));
     }
   };
 
   /* ============================================================
-     PUBLIC PAGE
+     PUBLIC PAGE — Class Finder
      ============================================================ */
 
   function initPublic() {
-    var input = document.getElementById("nameInput");
-    var btn = document.getElementById("findClassBtn");
+    var daySlider = document.getElementById("daySlider");
+    var dayLabels = document.getElementById("dayLabels");
+    var timeSlider = document.getElementById("timeSlider");
+    var timeLabels = document.getElementById("timeLabels");
+
+    var modeBirthdayBtn = document.getElementById("modeBirthdayBtn");
+    var modeAgeBtn = document.getElementById("modeAgeBtn");
+    var birthdayField = document.getElementById("birthdayField");
+    var ageField = document.getElementById("ageField");
+    var birthdayInput = document.getElementById("birthdayInput");
+    var ageInput = document.getElementById("ageInput");
+    var findBtn = document.getElementById("findClassBtn");
     var result = document.getElementById("lookupResult");
     var list = document.getElementById("publicClassList");
+    var listHeading = document.getElementById("publicClassListHeading");
 
-    function classLabel(room) {
-      return esc(room.name) + " — " + esc(room.day) + " · Room " + esc(room.room);
+    var mode = "birthday";
+    var currentTimesForDay = [];
+
+    function selectedDay() { return DAYS[parseInt(daySlider.value, 10)] || "Sunday"; }
+    function selectedTime() { return currentTimesForDay[parseInt(timeSlider.value, 10)] || null; }
+
+    function renderDayLabels() {
+      dayLabels.innerHTML = DAYS.map(function (d, i) {
+        return '<span class="' + (i === parseInt(daySlider.value, 10) ? "slider-label-active" : "") + '">' + d + "</span>";
+      }).join("");
+    }
+
+    function renderTimeSliderForDay() {
+      var byDay = Store.availableTimesByDay();
+      currentTimesForDay = byDay[selectedDay()] || [];
+      if (!currentTimesForDay.length) {
+        timeSlider.min = 0; timeSlider.max = 0; timeSlider.value = 0;
+        timeSlider.disabled = true;
+        timeLabels.innerHTML = '<span class="slider-label-active">No services configured</span>';
+        return;
+      }
+      timeSlider.disabled = false;
+      timeSlider.min = 0;
+      timeSlider.max = currentTimesForDay.length - 1;
+      if (parseInt(timeSlider.value, 10) > currentTimesForDay.length - 1) {
+        timeSlider.value = 0;
+      }
+      renderTimeLabels();
+    }
+
+    function renderTimeLabels() {
+      timeLabels.innerHTML = currentTimesForDay.map(function (t, i) {
+        return '<span class="' + (i === parseInt(timeSlider.value, 10) ? "slider-label-active" : "") + '">' + t + "</span>";
+      }).join("");
     }
 
     function renderClassList() {
-      var html = "";
-      ["Saturday", "Sunday"].forEach(function (day) {
-        var rooms = Store.state.classrooms
-          .filter(function (c) { return c.day === day; })
-          .sort(function (a, b) { return String(a.room).localeCompare(String(b.room), undefined, { numeric: true }); });
-        if (!rooms.length) return;
-        html += '<h3 class="day-heading">' + day + "</h3>" +
-          '<div class="public-class-grid">' +
-          rooms.map(function (c) {
-            return '<div class="public-class-card" style="border-top-color:' + esc(c.color) + '">' +
-              '<h3 class="public-class-name">' + esc(c.name) + "</h3>" +
-              '<p class="public-class-range">Room ' + esc(c.room) + " · " +
-                c.minMonths + "–" + c.maxMonths + " months</p>" +
-              "</div>";
-          }).join("") +
+      var day = selectedDay(), time = selectedTime();
+      listHeading.textContent = time ? ("Classes for " + day + " · " + time) : ("Classes for " + day);
+      if (!time) {
+        list.innerHTML = '<p class="empty-note">No classes configured for ' + esc(day) +
+          ' yet. Add them from the <a href="admin.html">admin page</a>.</p>';
+        return;
+      }
+      var rooms = Store.classroomsFor(day, time);
+      if (!rooms.length) {
+        list.innerHTML = '<p class="empty-note">No classes configured for this service yet.</p>';
+        return;
+      }
+      list.innerHTML = rooms.map(function (c) {
+        var range = c.minBirthdate
+          ? (fmtDateShort(c.minBirthdate) + (c.maxBirthdate ? " – " + fmtDateShort(c.maxBirthdate) : " – present"))
+          : "";
+        return '<div class="public-class-card" data-classroom-id="' + esc(c.id) + '" style="border-top-color:' + esc(c.color) + '">' +
+          '<h3 class="public-class-name">' + esc(c.name) + " · Room " + esc(c.room) +
+            (c.note ? ' <span class="class-note-tag">' + esc(c.note) + "</span>" : "") + "</h3>" +
+          '<p class="public-class-range">Birthdays ' + range + "</p>" +
           "</div>";
+      }).join("");
+    }
+
+    function clearHighlight() {
+      list.querySelectorAll(".public-class-card.highlight").forEach(function (el) {
+        el.classList.remove("highlight");
+      });
+    }
+
+    function lookup() {
+      var day = selectedDay(), time = selectedTime();
+      clearHighlight();
+
+      if (!time) {
+        result.innerHTML = '<div class="result-card result-none">' +
+          '<p class="result-kicker">No services configured</p>' +
+          '<p class="result-class">Nothing set up for ' + esc(day) + " yet</p>" +
+          "</div>";
+        return;
+      }
+
+      var birthdateISO = null;
+      if (mode === "birthday") {
+        if (!birthdayInput.value) {
+          result.innerHTML = '<div class="result-card result-none">' +
+            '<p class="result-kicker">One more thing</p>' +
+            '<p class="result-class">Enter a birthday</p>' +
+            "</div>";
+          return;
+        }
+        birthdateISO = birthdayInput.value;
+      } else {
+        var months = Number(ageInput.value);
+        if (ageInput.value === "" || isNaN(months) || months < 0) {
+          result.innerHTML = '<div class="result-card result-none">' +
+            '<p class="result-kicker">One more thing</p>' +
+            '<p class="result-class">Enter an age in months</p>' +
+            "</div>";
+          return;
+        }
+        birthdateISO = birthdateFromAgeMonths(Math.floor(months));
+      }
+
+      if (birthdateISO > todayISO()) {
+        result.innerHTML = '<div class="result-card result-none">' +
+          '<p class="result-kicker">Check the date</p>' +
+          '<p class="result-class">That birthday is in the future</p>' +
+          "</div>";
+        return;
+      }
+
+      var room = Store.classForBirthdate(day, time, birthdateISO);
+      if (room) {
+        result.innerHTML = '<div class="result-card" style="border-left-color:' + esc(room.color) + '">' +
+          '<p class="result-kicker">' + esc(day) + " · " + esc(time) + "</p>" +
+          '<p class="result-class">' + esc(room.name) + " — Room " + esc(room.room) + "</p>" +
+          '<p class="result-detail">Birthday ' + fmtDateNice(birthdateISO) +
+            (mode === "age" ? " (from " + Math.floor(Number(ageInput.value)) + " months old)" : "") + "</p>" +
+          "</div>";
+        var card = list.querySelector('[data-classroom-id="' + room.id + '"]');
+        if (card) {
+          card.classList.add("highlight");
+          card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+      } else {
+        result.innerHTML = '<div class="result-card result-none">' +
+          '<p class="result-kicker">No match found</p>' +
+          '<p class="result-class">No class covers that birthday for ' + esc(day) + " · " + esc(time) + "</p>" +
+          '<p class="result-detail">Please check with the office — the class list may need updating.</p>' +
+          "</div>";
+      }
+    }
+
+    function setMode(next) {
+      mode = next;
+      modeBirthdayBtn.classList.toggle("mode-tab-active", mode === "birthday");
+      modeAgeBtn.classList.toggle("mode-tab-active", mode === "age");
+      birthdayField.hidden = mode !== "birthday";
+      ageField.hidden = mode !== "age";
+    }
+
+    modeBirthdayBtn.addEventListener("click", function () { setMode("birthday"); });
+    modeAgeBtn.addEventListener("click", function () { setMode("age"); });
+
+    daySlider.addEventListener("input", function () {
+      renderDayLabels();
+      renderTimeSliderForDay();
+      renderClassList();
+    });
+    timeSlider.addEventListener("input", function () {
+      renderTimeLabels();
+      renderClassList();
+    });
+
+    findBtn.addEventListener("click", lookup);
+    birthdayInput.addEventListener("keydown", function (e) { if (e.key === "Enter") lookup(); });
+    ageInput.addEventListener("keydown", function (e) { if (e.key === "Enter") lookup(); });
+
+    // Initial state: auto-detect day/time from the current date/time.
+    var byDay = Store.availableTimesByDay();
+    var defaults = detectServiceDefault(byDay);
+    daySlider.value = DAYS.indexOf(defaults.day) >= 0 ? DAYS.indexOf(defaults.day) : 1;
+    renderDayLabels();
+    renderTimeSliderForDay();
+    if (defaults.time) {
+      var idx = currentTimesForDay.indexOf(defaults.time);
+      timeSlider.value = idx >= 0 ? idx : 0;
+      renderTimeLabels();
+    }
+    renderClassList();
+    setMode("birthday");
+    birthdayInput.max = todayISO();
+  }
+
+  /* ============================================================
+     ADMIN PAGE — manage class definitions
+     ============================================================ */
+
+  function initAdmin() {
+    var list = document.getElementById("adminClassList");
+    var summary = document.getElementById("adminSummary");
+
+    function render() {
+      if (Store.mode === "local") {
+        var note = document.getElementById("localModeNote");
+        if (note) note.hidden = false;
+      }
+
+      summary.textContent = Store.state.classrooms.length + " classroom" +
+        (Store.state.classrooms.length === 1 ? "" : "s") + " configured";
+
+      var byDay = {};
+      DAYS.forEach(function (d) { byDay[d] = {}; });
+      Store.state.classrooms.forEach(function (c) {
+        if (!byDay[c.day]) byDay[c.day] = {};
+        if (!byDay[c.day][c.time]) byDay[c.day][c.time] = [];
+        byDay[c.day][c.time].push(c);
+      });
+
+      var html = "";
+      DAYS.forEach(function (day) {
+        var times = Object.keys(byDay[day]).sort(function (a, b) { return timeToMinutes(a) - timeToMinutes(b); });
+        html += '<h2 class="day-heading">' + day +
+          '<span class="day-count">' + times.reduce(function (n, t) { return n + byDay[day][t].length; }, 0) + " classrooms</span></h2>";
+        if (!times.length) {
+          html += '<p class="empty-note">No classrooms yet for ' + day + ".</p>";
+          return;
+        }
+        times.forEach(function (time) {
+          var rooms = byDay[day][time].slice().sort(function (a, b) {
+            return (a.minBirthdate || "").localeCompare(b.minBirthdate || "");
+          });
+          html += '<h3 class="time-heading">' + time + "</h3>" +
+            '<div class="classroom-grid">' +
+            rooms.map(function (c) {
+              var range = c.minBirthdate
+                ? (fmtDateShort(c.minBirthdate) + " – " + (c.maxBirthdate ? fmtDateShort(c.maxBirthdate) : "present"))
+                : "No range set";
+              return '<div class="classroom-card" style="--room-color:' + esc(c.color) + '">' +
+                '<div class="classroom-head">' +
+                  '<div class="classroom-title">' +
+                    '<h3 class="classroom-name"><span class="color-dot"></span>' + esc(c.name) +
+                      (c.note ? ' <span class="class-note-tag">' + esc(c.note) + "</span>" : "") + "</h3>" +
+                    '<p class="classroom-range">Room ' + esc(c.room) + " · " + esc(range) + "</p>" +
+                  "</div>" +
+                  '<button class="slot-mini-btn" data-action="edit" data-id="' + esc(c.id) + '" aria-label="Edit classroom" style="font-size:1.1rem">⚙</button>' +
+                "</div>" +
+              "</div>";
+            }).join("") +
+            "</div>";
+        });
       });
       list.innerHTML = html;
     }
 
-    function lookup() {
-      var term = input.value.trim().toLowerCase();
-      if (!term) {
-        result.innerHTML =
-          '<div class="result-card result-none">' +
-          '<p class="result-kicker">One more thing</p>' +
-          '<p class="result-class">Enter your child’s name</p>' +
-          '<p class="result-detail">For example: John Smith</p>' +
-          "</div>";
-        return;
-      }
-
-      var matches = Store.state.children.filter(function (k) {
-        return k.name.toLowerCase().indexOf(term) !== -1;
-      });
-
-      if (!matches.length) {
-        result.innerHTML =
-          '<div class="result-card result-none">' +
-          '<p class="result-kicker">No match found</p>' +
-          '<p class="result-class">We couldn’t find that name</p>' +
-          '<p class="result-detail">Please stop by the check-in desk and our team will help you get registered.</p>' +
-          "</div>";
-        return;
-      }
-
-      result.innerHTML = matches.slice(0, 5).map(function (kid) {
-        var room = kid.classroomId ? Store.classroom(kid.classroomId) : null;
-        if (room) {
-          return '<div class="result-card" style="border-left-color:' + esc(room.color) + '">' +
-            '<p class="result-kicker">' + esc(kid.name) + " · " + monthsOld(kid.birthdate) + " months</p>" +
-            '<p class="result-class">' + esc(room.name) + "</p>" +
-            '<p class="result-detail">' + esc(room.day) + " · Room " + esc(room.room) + "</p>" +
-            "</div>";
-        }
-        return '<div class="result-card result-none">' +
-          '<p class="result-kicker">' + esc(kid.name) + " · " + monthsOld(kid.birthdate) + " months</p>" +
-          '<p class="result-class">Not assigned to a class yet</p>' +
-          '<p class="result-detail">Please stop by the check-in desk and our team will help you.</p>' +
-          "</div>";
-      }).join("");
-
-      if (matches.length > 5) {
-        result.innerHTML += '<p class="result-detail" style="margin-top:8px">Showing 5 of ' +
-          matches.length + " matches — try a full name.</p>";
-      }
-    }
-
-    btn.addEventListener("click", lookup);
-    input.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") lookup();
-    });
-
-    renderClassList();
-  }
-
-  /* ============================================================
-     ADMIN PAGE
-     ============================================================ */
-
-  function initAdmin() {
-    var grid = document.getElementById("classroomGrid");
-    var tbody = document.getElementById("unassignedTbody");
-    var unassignedDrop = document.getElementById("unassignedDrop");
-    var unassignedEmpty = document.getElementById("unassignedEmpty");
-    var searchInput = document.getElementById("unassignedSearch");
-    var summary = document.getElementById("dashboardSummary");
-    var toastEl = document.getElementById("toast");
-    var toastTimer = null;
-    var assignTargetRoomId = null;
-
-    Store.onError = function (msg) { toast(msg, true); };
-
-    if (Store.mode !== "supabase") {
-      var note = document.createElement("p");
-      note.className = "page-sub";
-      note.textContent = "Not connected to Supabase — changes are saved to this browser only.";
-      document.querySelector(".admin-toolbar div").appendChild(note);
-    }
-
-    /* ---------- toast ---------- */
-
-    function toast(msg, isError) {
-      toastEl.textContent = msg;
-      toastEl.classList.toggle("toast-error", !!isError);
-      toastEl.hidden = false;
-      clearTimeout(toastTimer);
-      toastTimer = setTimeout(function () { toastEl.hidden = true; }, 2600);
-    }
-
-    /* ---------- modal plumbing ---------- */
-
-    function openModal(id) {
-      document.getElementById(id).hidden = false;
-      var firstInput = document.getElementById(id).querySelector("input:not([type=hidden]), select");
-      if (firstInput) setTimeout(function () { firstInput.focus(); }, 30);
-    }
-
-    function closeModal(id) {
-      document.getElementById(id).hidden = true;
-    }
-
-    document.querySelectorAll("[data-close]").forEach(function (btn) {
-      btn.addEventListener("click", function () { closeModal(btn.getAttribute("data-close")); });
-    });
-
-    document.querySelectorAll(".modal-overlay").forEach(function (ov) {
-      ov.addEventListener("mousedown", function (e) {
-        if (e.target === ov) ov.hidden = true;
-      });
-    });
-
-    document.addEventListener("keydown", function (e) {
-      if (e.key === "Escape") {
-        document.querySelectorAll(".modal-overlay").forEach(function (ov) { ov.hidden = true; });
-      }
-    });
-
-    /* ---------- render: classrooms ---------- */
-
-    function render() {
-      renderClassrooms();
-      renderUnassigned();
-      var total = Store.state.children.length;
-      var unassignedCount = Store.unassigned().length;
-      summary.textContent = Store.state.classrooms.length + " classrooms · " +
-        total + " children · " + unassignedCount + " unassigned";
-    }
-
-    function renderClassrooms() {
-      grid.innerHTML = "";
-      if (!Store.state.classrooms.length) {
-        var empty = document.createElement("p");
-        empty.className = "empty-note";
-        empty.textContent = "No classrooms yet. Click “+ Add Classroom” to create your first one.";
-        grid.appendChild(empty);
-        return;
-      }
-      var days = [];
-      Store.state.classrooms.forEach(function (c) {
-        var d = c.day || "Sunday";
-        if (days.indexOf(d) === -1) days.push(d);
-      });
-      // Saturday before Sunday, any custom days after
-      days.sort(function (a, b) {
-        var order = { Saturday: 0, Sunday: 1 };
-        return (order[a] !== undefined ? order[a] : 9) - (order[b] !== undefined ? order[b] : 9);
-      });
-
-      days.forEach(function (day) {
-        var rooms = Store.state.classrooms
-          .filter(function (c) { return (c.day || "Sunday") === day; })
-          .sort(function (a, b) { return String(a.room).localeCompare(String(b.room), undefined, { numeric: true }); });
-
-        var heading = document.createElement("h2");
-        heading.className = "day-heading";
-        heading.innerHTML = esc(day) + ' <span class="day-count">' + rooms.length +
-          (rooms.length === 1 ? " class" : " classes") + "</span>";
-        grid.appendChild(heading);
-
-        var dayGrid = document.createElement("div");
-        dayGrid.className = "classroom-grid";
-        grid.appendChild(dayGrid);
-        rooms.forEach(function (room) { renderClassroomCard(room, dayGrid); });
-      });
-    }
-
-    function renderClassroomCard(room, dayGrid) {
-        var kids = Store.childrenIn(room.id);
-        var isFull = kids.length >= CAPACITY;
-
-        var card = document.createElement("section");
-        card.className = "classroom-card";
-        card.style.setProperty("--room-color", room.color);
-        card.dataset.roomId = room.id;
-
-        var slotsHtml = "";
-        kids.forEach(function (kid) {
-          slotsHtml +=
-            '<li class="slot slot-occupied" draggable="true" data-child-id="' + esc(kid.id) + '">' +
-              '<span class="slot-name" title="' + esc(kid.name) + (kid.notes ? " — " + esc(kid.notes) : "") + '">' +
-                esc(kid.name) + (kid.notes ? '<span class="note-dot" title="' + esc(kid.notes) + '"></span>' : "") + "</span>" +
-              '<span class="slot-age">' + monthsOld(kid.birthdate) + " months</span>" +
-              '<span class="slot-actions">' +
-                '<button class="slot-mini-btn" data-action="edit" title="Edit child">✎</button>' +
-                '<button class="slot-mini-btn" data-action="unassign" title="Move to Unassigned">✕</button>' +
-              "</span>" +
-            "</li>";
-        });
-        for (var i = kids.length; i < CAPACITY; i++) {
-          slotsHtml +=
-            '<li class="slot">' +
-              '<button class="slot-empty" data-action="fill-slot">' +
-                '<span class="plus">+</span><span>Add Child</span>' +
-              "</button>" +
-            "</li>";
-        }
-
-        card.innerHTML =
-          '<div class="classroom-head">' +
-            '<div class="classroom-title">' +
-              '<h2 class="classroom-name"><span class="color-dot"></span>' + esc(room.name) + "</h2>" +
-              '<p class="classroom-range">Room ' + esc(room.room || "—") + " · " +
-                room.minMonths + "–" + room.maxMonths + " months</p>" +
-            "</div>" +
-            '<div class="classroom-meta">' +
-              '<span class="count-pill' + (isFull ? " full" : "") + '">' + kids.length + " / " + CAPACITY + "</span>" +
-              '<button class="icon-btn" data-action="settings" title="Classroom settings">⚙</button>' +
-            "</div>" +
-          "</div>" +
-          (isFull ? '<div class="full-banner">Classroom Full (' + CAPACITY + "/" + CAPACITY + ")</div>" : "") +
-          '<ul class="slot-list">' + slotsHtml + "</ul>";
-
-        dayGrid.appendChild(card);
-    }
-
-    /* ---------- render: unassigned ---------- */
-
-    function renderUnassigned() {
-      var term = searchInput.value.trim().toLowerCase();
-      var kids = Store.unassigned()
-        .filter(function (k) { return !term || k.name.toLowerCase().indexOf(term) !== -1; })
-        .sort(function (a, b) { return a.name.localeCompare(b.name); });
-
-      tbody.innerHTML = kids.map(function (kid) {
-        return '<tr draggable="true" data-child-id="' + esc(kid.id) + '">' +
-          '<td class="td-name">' + esc(kid.name) + "</td>" +
-          "<td>" + fmtDate(kid.birthdate) + "</td>" +
-          "<td>" + monthsOld(kid.birthdate) + "</td>" +
-          '<td class="td-notes" title="' + esc(kid.notes || "") + '">' + (esc(kid.notes) || "—") + "</td>" +
-          '<td><span class="badge-unassigned">Unassigned</span></td>' +
-          '<td class="td-actions"><button class="link-btn" data-action="edit">Edit</button></td>' +
-          "</tr>";
-      }).join("");
-
-      var noneAtAll = Store.unassigned().length === 0;
-      unassignedEmpty.hidden = kids.length > 0;
-      unassignedEmpty.textContent = noneAtAll
-        ? "No unassigned children. Drag a child here to unassign them."
-        : "No children match your search.";
-    }
-
-    searchInput.addEventListener("input", renderUnassigned);
-
-    /* ---------- clicks (event delegation) ---------- */
-
-    grid.addEventListener("click", function (e) {
-      var btn = e.target.closest("[data-action]");
-      if (!btn) return;
-      var card = e.target.closest(".classroom-card");
-      var roomId = card ? card.dataset.roomId : null;
-      var action = btn.dataset.action;
-
-      if (action === "settings") {
-        openClassroomModal(roomId);
-      } else if (action === "fill-slot") {
-        openAssignModal(roomId);
-      } else {
-        var slot = e.target.closest("[data-child-id]");
-        if (!slot) return;
-        var childId = slot.dataset.childId;
-        if (action === "edit") openChildModal(childId);
-        if (action === "unassign") {
-          Store.moveChild(childId, null);
-          render();
-          toast("Moved to Unassigned");
-        }
-      }
-    });
-
-    tbody.addEventListener("click", function (e) {
+    list.addEventListener("click", function (e) {
       var btn = e.target.closest("[data-action=edit]");
       if (!btn) return;
-      var row = e.target.closest("[data-child-id]");
-      if (row) openChildModal(row.dataset.childId);
-    });
-
-    /* ---------- drag and drop (native HTML5) ---------- */
-
-    var draggedChildId = null;
-
-    document.addEventListener("dragstart", function (e) {
-      var el = e.target.closest("[data-child-id]");
-      if (!el) return;
-      draggedChildId = el.dataset.childId;
-      el.classList.add("dragging");
-      e.dataTransfer.setData("text/plain", draggedChildId);
-      e.dataTransfer.effectAllowed = "move";
-    });
-
-    document.addEventListener("dragend", function (e) {
-      var el = e.target.closest("[data-child-id]");
-      if (el) el.classList.remove("dragging");
-      clearDropHighlights();
-      draggedChildId = null;
-    });
-
-    function clearDropHighlights() {
-      document.querySelectorAll(".drop-target, .drop-blocked").forEach(function (el) {
-        el.classList.remove("drop-target", "drop-blocked");
-      });
-    }
-
-    function roomCanAccept(roomId) {
-      var kid = Store.child(draggedChildId);
-      if (!kid) return false;
-      if (kid.classroomId === roomId) return false; // no-op move
-      return Store.childrenIn(roomId).length < CAPACITY;
-    }
-
-    grid.addEventListener("dragover", function (e) {
-      var card = e.target.closest(".classroom-card");
-      if (!card || !draggedChildId) return;
-      e.preventDefault();
-      clearDropHighlights();
-      var kid = Store.child(draggedChildId);
-      if (kid && kid.classroomId === card.dataset.roomId) return;
-      if (roomCanAccept(card.dataset.roomId)) {
-        card.classList.add("drop-target");
-        e.dataTransfer.dropEffect = "move";
-      } else {
-        card.classList.add("drop-blocked");
-        e.dataTransfer.dropEffect = "none";
-      }
-    });
-
-    grid.addEventListener("dragleave", function (e) {
-      var card = e.target.closest(".classroom-card");
-      if (card && !card.contains(e.relatedTarget)) {
-        card.classList.remove("drop-target", "drop-blocked");
-      }
-    });
-
-    grid.addEventListener("drop", function (e) {
-      var card = e.target.closest(".classroom-card");
-      if (!card) return;
-      e.preventDefault();
-      var childId = e.dataTransfer.getData("text/plain") || draggedChildId;
-      clearDropHighlights();
-      if (!childId) return;
-      var res = Store.moveChild(childId, card.dataset.roomId);
-      if (res.ok) {
-        render();
-        var kid = Store.child(childId);
-        var room = Store.classroom(card.dataset.roomId);
-        toast(kid.name + " → " + room.name);
-      } else {
-        toast(res.message, true);
-      }
-    });
-
-    unassignedDrop.addEventListener("dragover", function (e) {
-      if (!draggedChildId) return;
-      e.preventDefault();
-      unassignedDrop.classList.add("drop-target");
-      e.dataTransfer.dropEffect = "move";
-    });
-
-    unassignedDrop.addEventListener("dragleave", function (e) {
-      if (!unassignedDrop.contains(e.relatedTarget)) {
-        unassignedDrop.classList.remove("drop-target");
-      }
-    });
-
-    unassignedDrop.addEventListener("drop", function (e) {
-      e.preventDefault();
-      unassignedDrop.classList.remove("drop-target");
-      var childId = e.dataTransfer.getData("text/plain") || draggedChildId;
-      if (!childId) return;
-      var kid = Store.child(childId);
-      if (!kid || !kid.classroomId) return; // already unassigned
-      Store.moveChild(childId, null);
-      render();
-      toast(kid.name + " moved to Unassigned");
-    });
-
-    /* ---------- child modal (add / edit) ---------- */
-
-    var childForm = document.getElementById("childForm");
-    var childFormError = document.getElementById("childFormError");
-    var agePreview = document.getElementById("agePreview");
-
-    function fillClassroomSelect(selectedId) {
-      var sel = document.getElementById("childClassroom");
-      var opts = '<option value="">Unassigned</option>';
-      Store.state.classrooms.forEach(function (c) {
-        var count = Store.childrenIn(c.id).length;
-        var full = count >= CAPACITY && c.id !== selectedId;
-        opts += '<option value="' + esc(c.id) + '"' +
-          (c.id === selectedId ? " selected" : "") +
-          (full ? " disabled" : "") + ">" +
-          esc(c.name) + " — " + esc(c.day) + " Rm " + esc(c.room) +
-          " (" + count + "/" + CAPACITY + (full ? " · full" : "") + ")</option>";
-      });
-      sel.innerHTML = opts;
-    }
-
-    function updateAgePreview() {
-      var bd = document.getElementById("childBirthdate").value;
-      agePreview.textContent = bd ? "Age: " + monthsOld(bd) + " months" : "";
-    }
-
-    document.getElementById("childBirthdate").addEventListener("input", updateAgePreview);
-
-    function openChildModal(childId, presetRoomId) {
-      var kid = childId ? Store.child(childId) : null;
-      document.getElementById("childModalTitle").textContent = kid ? "Edit Child" : "Add Child";
-      document.getElementById("childSaveBtn").textContent = kid ? "Save Changes" : "Add Child";
-      document.getElementById("childId").value = kid ? kid.id : "";
-      document.getElementById("childName").value = kid ? kid.name : "";
-      document.getElementById("childBirthdate").value = kid ? kid.birthdate : "";
-      document.getElementById("childBirthdate").max = todayISO();
-      document.getElementById("guardianName").value = kid ? kid.guardianName : "";
-      document.getElementById("guardianEmail").value = kid ? kid.guardianEmail : "";
-      document.getElementById("childNotes").value = kid ? (kid.notes || "") : "";
-      fillClassroomSelect(kid ? kid.classroomId : (presetRoomId || ""));
-      childFormError.hidden = true;
-      updateAgePreview();
-      openModal("childModal");
-    }
-
-    childForm.addEventListener("submit", function (e) {
-      e.preventDefault();
-      var id = document.getElementById("childId").value;
-      var data = {
-        name: document.getElementById("childName").value.trim(),
-        birthdate: document.getElementById("childBirthdate").value,
-        guardianName: document.getElementById("guardianName").value.trim(),
-        guardianEmail: document.getElementById("guardianEmail").value.trim(),
-        notes: document.getElementById("childNotes").value.trim(),
-        classroomId: document.getElementById("childClassroom").value || null
-      };
-
-      if (!data.name || !data.birthdate) {
-        childFormError.textContent = "Name and birthdate are required.";
-        childFormError.hidden = false;
-        return;
-      }
-      if (data.birthdate > todayISO()) {
-        childFormError.textContent = "Birthdate cannot be in the future.";
-        childFormError.hidden = false;
-        return;
-      }
-
-      var res = id ? Store.updateChild(id, data) : Store.addChild(data);
-      closeModal("childModal");
-      render();
-      if (res.warning) toast(res.warning, true);
-      else toast(id ? "Child updated" : data.name + " added");
-    });
-
-    document.getElementById("addChildBtn").addEventListener("click", function () {
-      openChildModal(null);
-    });
-
-    /* ---------- assign existing child modal ---------- */
-
-    var assignSearch = document.getElementById("assignSearch");
-    var assignList = document.getElementById("assignList");
-    var assignEmpty = document.getElementById("assignEmpty");
-
-    function openAssignModal(roomId) {
-      assignTargetRoomId = roomId;
-      var room = Store.classroom(roomId);
-      document.getElementById("assignModalTitle").textContent = "Add Child to " + room.name;
-      assignSearch.value = "";
-      renderAssignList();
-      openModal("assignModal");
-    }
-
-    function renderAssignList() {
-      var term = assignSearch.value.trim().toLowerCase();
-      var candidates = Store.state.children
-        .filter(function (k) { return k.classroomId !== assignTargetRoomId; })
-        .filter(function (k) { return !term || k.name.toLowerCase().indexOf(term) !== -1; })
-        .sort(function (a, b) {
-          // Unassigned children first, then by name
-          var ua = a.classroomId ? 1 : 0, ub = b.classroomId ? 1 : 0;
-          return ua - ub || a.name.localeCompare(b.name);
-        });
-
-      assignList.innerHTML = candidates.map(function (kid) {
-        var current = kid.classroomId ? Store.classroom(kid.classroomId) : null;
-        return '<li class="assign-item" data-child-id="' + esc(kid.id) + '">' +
-          '<span class="assign-item-info">' +
-            '<span class="assign-item-name">' + esc(kid.name) + "</span>" +
-            '<span class="assign-item-meta">' + monthsOld(kid.birthdate) + " months · " +
-              (current ? "Currently in " + esc(current.name) : "Unassigned") + "</span>" +
-          "</span>" +
-          '<button class="btn btn-secondary" data-action="pick">Add</button>' +
-        "</li>";
-      }).join("");
-      assignEmpty.hidden = candidates.length > 0;
-    }
-
-    assignSearch.addEventListener("input", renderAssignList);
-
-    assignList.addEventListener("click", function (e) {
-      var btn = e.target.closest("[data-action=pick]");
-      if (!btn) return;
-      var item = e.target.closest("[data-child-id]");
-      var res = Store.moveChild(item.dataset.childId, assignTargetRoomId);
-      if (res.ok) {
-        closeModal("assignModal");
-        render();
-        toast(Store.child(item.dataset.childId).name + " added to " +
-          Store.classroom(assignTargetRoomId).name);
-      } else {
-        toast(res.message, true);
-      }
-    });
-
-    document.getElementById("assignNewChildBtn").addEventListener("click", function () {
-      var roomId = assignTargetRoomId;
-      closeModal("assignModal");
-      openChildModal(null, roomId);
+      openClassroomModal(btn.dataset.id);
     });
 
     /* ---------- classroom modal ---------- */
@@ -849,6 +579,8 @@
     var classroomFormError = document.getElementById("classroomFormError");
     var swatches = document.getElementById("colorSwatches");
     var selectedColor = COLOR_CHOICES[0];
+    var noUpperLimit = document.getElementById("classroomNoMax");
+    var maxField = document.getElementById("classroomMax");
 
     function renderSwatches() {
       swatches.innerHTML = COLOR_CHOICES.map(function (color) {
@@ -858,12 +590,26 @@
           '" aria-label="Select color ' + color + '"></button>';
       }).join("");
     }
-
     swatches.addEventListener("click", function (e) {
       var btn = e.target.closest("[data-color]");
       if (!btn) return;
       selectedColor = btn.dataset.color;
       renderSwatches();
+    });
+
+    noUpperLimit.addEventListener("change", function () {
+      maxField.disabled = noUpperLimit.checked;
+      if (noUpperLimit.checked) maxField.value = "";
+    });
+
+    function openModal(id) {
+      document.getElementById(id).hidden = false;
+    }
+    function closeModal(id) {
+      document.getElementById(id).hidden = true;
+    }
+    document.querySelectorAll("[data-close-modal]").forEach(function (btn) {
+      btn.addEventListener("click", function () { closeModal(btn.dataset.closeModal); });
     });
 
     function openClassroomModal(roomId) {
@@ -872,12 +618,23 @@
       document.getElementById("classroomId").value = room.id;
       document.getElementById("classroomName").value = room.name;
       document.getElementById("classroomDay").value = room.day || "Sunday";
+      document.getElementById("classroomTime").value = room.time || "8:00 AM";
       document.getElementById("classroomRoom").value = room.room || "";
-      document.getElementById("classroomMin").value = room.minMonths;
-      document.getElementById("classroomMax").value = room.maxMonths;
+      document.getElementById("classroomMin").value = room.minBirthdate || "";
+      document.getElementById("classroomNote").value = room.note || "";
+      if (room.maxBirthdate) {
+        maxField.value = room.maxBirthdate;
+        maxField.disabled = false;
+        noUpperLimit.checked = false;
+      } else {
+        maxField.value = "";
+        maxField.disabled = true;
+        noUpperLimit.checked = true;
+      }
       selectedColor = room.color;
       renderSwatches();
       classroomFormError.hidden = true;
+      document.getElementById("classroomModalTitle").textContent = "Edit Classroom";
       openModal("classroomModal");
     }
 
@@ -886,32 +643,27 @@
       var id = document.getElementById("classroomId").value;
       var name = document.getElementById("classroomName").value.trim();
       var day = document.getElementById("classroomDay").value;
+      var time = document.getElementById("classroomTime").value.trim();
       var roomNo = document.getElementById("classroomRoom").value.trim();
-      var min = parseInt(document.getElementById("classroomMin").value, 10);
-      var max = parseInt(document.getElementById("classroomMax").value, 10);
+      var min = document.getElementById("classroomMin").value;
+      var max = noUpperLimit.checked ? "" : maxField.value;
+      var note = document.getElementById("classroomNote").value.trim();
 
-      if (!name) {
-        classroomFormError.textContent = "Classroom name is required.";
+      if (!name) { showErr("Classroom name is required."); return; }
+      if (!time) { showErr("Service time is required (e.g. 8:00 AM)."); return; }
+      if (!roomNo) { showErr("Room number is required."); return; }
+      if (!min) { showErr("A starting birthdate is required."); return; }
+      if (max && max < min) { showErr("End date can't be before the start date."); return; }
+
+      function showErr(msg) {
+        classroomFormError.textContent = msg;
         classroomFormError.hidden = false;
-        return;
-      }
-      if (!roomNo) {
-        classroomFormError.textContent = "Room number is required.";
-        classroomFormError.hidden = false;
-        return;
-      }
-      if (isNaN(min) || isNaN(max) || min < 0 || max < 0) {
-        classroomFormError.textContent = "Age range must be valid numbers.";
-        classroomFormError.hidden = false;
-        return;
-      }
-      if (min > max) {
-        classroomFormError.textContent = "Minimum age cannot be greater than maximum age.";
-        classroomFormError.hidden = false;
-        return;
       }
 
-      Store.updateClassroom(id, { name: name, day: day, room: roomNo, color: selectedColor, minMonths: min, maxMonths: max });
+      Store.updateClassroom(id, {
+        name: name, day: day, time: time, room: roomNo, color: selectedColor,
+        minBirthdate: min, maxBirthdate: max || null, note: note
+      });
       closeModal("classroomModal");
       render();
       toast("Classroom updated");
@@ -921,24 +673,32 @@
       var id = document.getElementById("classroomId").value;
       var room = Store.classroom(id);
       if (!room) return;
-      var count = Store.childrenIn(id).length;
-      var msg = 'Delete "' + room.name + '"?' +
-        (count ? "\n\n" + count + " child" + (count === 1 ? "" : "ren") +
-          " will be moved to Unassigned (not deleted)." : "");
-      if (!confirm(msg)) return;
+      if (!confirm('Delete "' + room.name + ' — Room ' + room.room + '"?')) return;
       Store.removeClassroom(id);
       closeModal("classroomModal");
       render();
-      toast(room.name + " deleted" + (count ? " · " + count + " moved to Unassigned" : ""));
+      toast(room.name + " deleted");
     });
 
     document.getElementById("addClassroomBtn").addEventListener("click", function () {
       var room = Store.addClassroom();
       render();
-      toast(room.name + " created — open ⚙ to set its age range");
       openClassroomModal(room.id);
+      document.getElementById("classroomModalTitle").textContent = "New Classroom";
+      toast("Classroom created — set its details below");
     });
 
+    /* ---------- toast ---------- */
+
+    var toastTimer = null;
+    function toast(msg, isError) {
+      var el = document.getElementById("toast");
+      el.textContent = msg;
+      el.className = "toast" + (isError ? " toast-error" : "");
+      el.hidden = false;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(function () { el.hidden = true; }, 3200);
+    }
 
     render();
   }

@@ -1,52 +1,83 @@
-# Providence Kids — Classroom Management
+# Providence Kids — Class Finder
 
-Children's classroom management for Providence Church. Plain HTML/CSS/JS frontend, Supabase database, hosted on GitHub Pages.
+A lookup tool for Providence Church: staff enter a child's birthday (or age
+in months) plus which service they're attending, and the app shows the
+matching classroom. No child records are stored — this is a calculator, not
+a roster. Plain HTML/CSS/JS frontend, Supabase database, hosted on GitHub
+Pages.
 
 ## Pages
 
-- **index.html** — public page. Parents search their child's name and see the assigned class, day, and room.
-- **admin.html** — admin dashboard. Saturday (Rooms 110/120) and Sunday (Rooms 110–140) classrooms with 12 slots each, drag-and-drop assignment, add/edit children with guardian info and notes, classroom settings (name, day, room, color, age range), and an Unassigned Children table with search.
+- **index.html** — Class Finder. Enter a birthday (calendar picker) or age
+  in months, pick the Day and Service Time sliders (auto-detected from the
+  current date/time, defaulting to Sunday 8:00 AM if it's neither Saturday
+  nor Sunday), and see the matching classroom. All classes for the selected
+  day/time are listed below, with the match highlighted.
+- **admin.html** — manage the classroom definitions: name, day, service
+  time, room, birthdate range, color, and an optional note (e.g.
+  "younger"/"older"). This is what you'll update each year on Move Up
+  Sunday when the age bands shift.
 
 ## Modes
 
-- **With Supabase configured** — all data lives in your Supabase project. Every change (drag, edit, add, delete) writes through immediately. The database starts empty; add classrooms and children from the admin dashboard.
-- **Without Supabase** — the app falls back to saving in the current browser only (localStorage), with a note in the admin header.
+- **With Supabase configured** — classroom definitions live in your
+  Supabase project. Every add/edit/delete writes through immediately.
+- **Without Supabase** — the app falls back to the current browser's
+  localStorage, seeded with the real 2026–2027 Sunday class assignments.
 
 ## Deploy to GitHub Pages
 
-1. Create a new repo on GitHub, then push this folder:
-   ```bash
-   git remote add origin https://github.com/YOUR-USERNAME/providence-kids.git
-   git push -u origin main
-   ```
-2. In the repo: **Settings → Pages → Source: GitHub Actions**.
+1. Push this folder to your repo (or upload the changed files via the
+   GitHub web UI: `index.html`, `admin.html`, `app.js`, `styles.css`,
+   `supabase/schema.sql`, `supabase/seed_classes.sql`, this `README.md`).
+2. **Settings → Pages → Source: GitHub Actions** (already set up if this
+   is an existing repo).
 3. Every push to `main` deploys via `.github/workflows/deploy.yml`.
 
-## Connect Supabase
+## Connect / migrate Supabase
+
+⚠️ This redesign changes the database shape. If you already have Supabase
+connected from the old roster-based version:
+
+1. Open your Supabase project → **SQL Editor → New query**.
+2. Paste and run `supabase/schema.sql`. This **drops the old `children`
+   table and rebuilds `classrooms`** with the new day/time/date-range
+   columns. Any names/notes previously saved in `children` will be
+   deleted — that data is no longer used by the app.
+3. Paste and run `supabase/seed_classes.sql`. This inserts all the real
+   Sunday classes (8:00 AM, 9:30 AM, 11:10 AM) from the class assignment
+   sheets. Safe to re-run — it upserts by id.
+4. No Saturday sheet was provided yet, so no Saturday classes are seeded.
+   Add them from the admin page, or extend `seed_classes.sql`, once that
+   schedule is available.
+
+If you're starting fresh (no existing Supabase project):
 
 1. Create a project at supabase.com.
-2. Run `supabase/schema.sql` in the SQL Editor.
+2. Run `supabase/schema.sql` then `supabase/seed_classes.sql` in the SQL
+   Editor.
 3. Add repository secrets (**Settings → Secrets and variables → Actions**):
-   - `SUPABASE_URL` — your project URL
-   - `SUPABASE_ANON_KEY` — your anon public key
-4. Re-run the deploy (push any commit or use *Run workflow*). The workflow writes `config.js` from the secrets at build time.
+   `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
+4. Re-run the deploy (push a commit, or **Actions → Run workflow**).
 
-For local development, copy `config.example.js` to `config.js` and fill in the same two values, then serve the folder (`python3 -m http.server`).
+For local development, copy `config.example.js` to `config.js`, fill in
+the same two values, then serve the folder (`python3 -m http.server`).
 
-> The anon key is designed to be public — access control comes from Row Level Security, not from hiding the key. A `.env` file can't work here because GitHub Pages is static hosting with no server; the Actions secrets play that role instead.
-
-## ⚠️ Before entering real children's data
-
-`supabase/schema.sql` currently ships **open RLS policies** so the app works without login, meaning anyone who visits the site can read and edit the data — including children's names, birthdates, and guardian contact info on the public internet. Before real use, add Supabase Auth to the admin page and replace the open policies with authenticated-only ones (a starting point is commented at the bottom of the schema file).
+> The anon key is designed to be public — access control comes from Row
+> Level Security, not from hiding the key. Since no personal/child data
+> is stored anymore (just class definitions), open read/write policies
+> are low-risk. Add Supabase Auth later if you want the admin page
+> login-gated.
 
 ## Structure
 
 ```
-index.html            public lookup page
-admin.html            admin dashboard
-styles.css            all styles
-app.js                UI + Store data layer (Supabase or localStorage)
-config.example.js     template for Supabase credentials
-supabase/schema.sql   database schema + RLS policies
-.github/workflows/    GitHub Pages deployment
+index.html                  Class Finder (birthday/age lookup + day/time sliders)
+admin.html                  Classroom definitions admin
+styles.css                  all styles
+app.js                      UI + Store data layer (Supabase or localStorage)
+config.example.js           template for Supabase credentials
+supabase/schema.sql         database schema + RLS policies (drops old roster tables)
+supabase/seed_classes.sql   real 2026–2027 Sunday class assignments
+.github/workflows/          GitHub Pages deployment
 ```

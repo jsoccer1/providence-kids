@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Admin Dashboard · Providence Kids</title>
+  <title>Admin · Providence Kids</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -19,11 +19,11 @@
              onerror="this.style.display='none'">
         <span class="brand-text">
           <span class="brand-name">Providence Kids</span>
-          <span class="brand-sub">Admin Dashboard</span>
+          <span class="brand-sub">Admin · Class Definitions</span>
         </span>
       </a>
       <nav class="header-nav">
-        <a class="btn btn-ghost" href="index.html">Public Page</a>
+        <a class="btn btn-ghost" href="index.html">Class Finder</a>
       </nav>
     </div>
   </header>
@@ -32,160 +32,89 @@
 
     <div class="admin-toolbar">
       <div>
-        <h1 class="page-title">Classrooms</h1>
-        <p class="page-sub" id="dashboardSummary"></p>
+        <h1 class="page-title">Classroom definitions</h1>
+        <p class="page-sub" id="adminSummary"></p>
+        <p class="page-sub" id="localModeNote" hidden>Offline demo mode — changes are saved to this browser only (no Supabase connected).</p>
       </div>
       <div class="toolbar-actions">
-        <button id="addClassroomBtn" class="btn btn-secondary">+ Add Classroom</button>
-        <button id="addChildBtn" class="btn btn-primary">+ Add Child</button>
+        <button id="addClassroomBtn" class="btn btn-primary">+ Add Classroom</button>
       </div>
     </div>
 
-    <div id="classroomGrid"></div>
+    <div id="adminClassList"></div>
 
-    <section class="unassigned-section" id="unassignedSection">
-      <div class="unassigned-header">
-        <h2 class="section-title">Unassigned Children</h2>
-        <input id="unassignedSearch" type="search" class="search-input"
-               placeholder="Search by name…" autocomplete="off">
-      </div>
-      <div id="unassignedDrop" class="unassigned-drop">
-        <table class="child-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Birthdate</th>
-              <th>Age in Months</th>
-              <th>Notes</th>
-              <th>Class</th>
-              <th class="th-actions"></th>
-            </tr>
-          </thead>
-          <tbody id="unassignedTbody"></tbody>
-        </table>
-        <p id="unassignedEmpty" class="empty-note" hidden>No unassigned children. Drag a child here to unassign them.</p>
-      </div>
-    </section>
   </main>
 
-  <!-- Add / Edit Child modal -->
-  <div class="modal-overlay" id="childModal" hidden>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="childModalTitle">
-      <div class="modal-head">
-        <h3 id="childModalTitle">Add Child</h3>
-        <button class="modal-close" data-close="childModal" aria-label="Close">×</button>
-      </div>
-      <form id="childForm" class="modal-body">
-        <input type="hidden" id="childId">
-        <div class="form-grid">
-          <label class="field">
-            <span class="field-label">Child name <em>*</em></span>
-            <input type="text" id="childName" required autocomplete="off">
-          </label>
-          <label class="field">
-            <span class="field-label">Birthdate <em>*</em></span>
-            <input type="date" id="childBirthdate" required>
-          </label>
-          <label class="field">
-            <span class="field-label">Guardian name</span>
-            <input type="text" id="guardianName" autocomplete="off">
-          </label>
-          <label class="field">
-            <span class="field-label">Guardian email</span>
-            <input type="email" id="guardianEmail" autocomplete="off">
-          </label>
-          <label class="field field-wide">
-            <span class="field-label">Classroom</span>
-            <select id="childClassroom"></select>
-          </label>
-          <label class="field field-wide">
-            <span class="field-label">Notes</span>
-            <textarea id="childNotes" rows="2" placeholder="Allergies, pick-up notes, etc."></textarea>
-          </label>
-        </div>
-        <p class="age-preview" id="agePreview"></p>
-        <p class="form-error" id="childFormError" hidden></p>
-        <div class="modal-actions">
-          <button type="button" class="btn btn-ghost" data-close="childModal">Cancel</button>
-          <button type="submit" class="btn btn-primary" id="childSaveBtn">Save Child</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- Classroom settings modal -->
+  <!-- Classroom edit/create modal -->
   <div class="modal-overlay" id="classroomModal" hidden>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="classroomModalTitle">
+    <div class="modal">
       <div class="modal-head">
-        <h3 id="classroomModalTitle">Classroom Settings</h3>
-        <button class="modal-close" data-close="classroomModal" aria-label="Close">×</button>
-      </div>
-      <form id="classroomForm" class="modal-body">
-        <input type="hidden" id="classroomId">
-        <div class="form-grid">
-          <label class="field field-wide">
-            <span class="field-label">Classroom name <em>*</em></span>
-            <input type="text" id="classroomName" required autocomplete="off">
-          </label>
-          <label class="field">
-            <span class="field-label">Day <em>*</em></span>
-            <select id="classroomDay">
-              <option value="Saturday">Saturday</option>
-              <option value="Sunday">Sunday</option>
-            </select>
-          </label>
-          <label class="field">
-            <span class="field-label">Room <em>*</em></span>
-            <input type="text" id="classroomRoom" required autocomplete="off" placeholder="e.g. 110">
-          </label>
-          <label class="field">
-            <span class="field-label">Minimum age (months) <em>*</em></span>
-            <input type="number" id="classroomMin" min="0" max="216" required>
-          </label>
-          <label class="field">
-            <span class="field-label">Maximum age (months) <em>*</em></span>
-            <input type="number" id="classroomMax" min="0" max="216" required>
-          </label>
-          <div class="field field-wide">
-            <span class="field-label">Classroom color</span>
-            <div id="colorSwatches" class="color-swatches"></div>
-          </div>
-        </div>
-        <p class="form-error" id="classroomFormError" hidden></p>
-        <div class="modal-actions modal-actions-split">
-          <button type="button" class="btn btn-danger" id="deleteClassroomBtn">Delete Classroom</button>
-          <div class="modal-actions-right">
-            <button type="button" class="btn btn-ghost" data-close="classroomModal">Cancel</button>
-            <button type="submit" class="btn btn-primary">Save Changes</button>
-          </div>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- Assign existing child modal -->
-  <div class="modal-overlay" id="assignModal" hidden>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="assignModalTitle">
-      <div class="modal-head">
-        <h3 id="assignModalTitle">Add Child to Classroom</h3>
-        <button class="modal-close" data-close="assignModal" aria-label="Close">×</button>
+        <h3 id="classroomModalTitle">Edit Classroom</h3>
+        <button class="modal-close" data-close-modal="classroomModal" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body">
-        <input type="search" id="assignSearch" class="search-input search-full"
-               placeholder="Search children…" autocomplete="off">
-        <ul id="assignList" class="assign-list"></ul>
-        <p id="assignEmpty" class="empty-note" hidden>No available children found. Use “+ Add Child” to create one.</p>
-        <div class="modal-actions">
-          <button type="button" class="btn btn-ghost" data-close="assignModal">Cancel</button>
-          <button type="button" class="btn btn-secondary" id="assignNewChildBtn">+ New Child</button>
-        </div>
+        <form id="classroomForm">
+          <input type="hidden" id="classroomId">
+          <div class="form-grid">
+            <div class="field field-wide">
+              <label class="field-label" for="classroomName">Name</label>
+              <input id="classroomName" type="text" placeholder="e.g. Nursery, Twos, Threes">
+            </div>
+            <div class="field">
+              <label class="field-label" for="classroomDay">Day</label>
+              <select id="classroomDay">
+                <option value="Saturday">Saturday</option>
+                <option value="Sunday">Sunday</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="field-label" for="classroomTime">Service Time</label>
+              <input id="classroomTime" type="text" placeholder="e.g. 9:30 AM" list="timeSuggestions">
+              <datalist id="timeSuggestions">
+                <option value="8:00 AM">
+                <option value="9:30 AM">
+                <option value="11:10 AM">
+              </datalist>
+            </div>
+            <div class="field">
+              <label class="field-label" for="classroomRoom">Room number</label>
+              <input id="classroomRoom" type="text" placeholder="e.g. 110">
+            </div>
+            <div class="field">
+              <label class="field-label" for="classroomNote">Note <span style="text-transform:none;font-weight:400;">(optional)</span></label>
+              <input id="classroomNote" type="text" placeholder="e.g. younger, older">
+            </div>
+            <div class="field">
+              <label class="field-label" for="classroomMin">Birthdate range starts</label>
+              <input id="classroomMin" type="date">
+            </div>
+            <div class="field">
+              <label class="field-label" for="classroomMax">Birthdate range ends</label>
+              <input id="classroomMax" type="date">
+              <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:0.85rem;color:var(--ink-soft);font-weight:400;">
+                <input type="checkbox" id="classroomNoMax" style="width:auto;"> No upper limit (newest babies)
+              </label>
+            </div>
+            <div class="field field-wide">
+              <label class="field-label">Color</label>
+              <div class="color-swatches" id="colorSwatches"></div>
+            </div>
+          </div>
+          <p class="form-error" id="classroomFormError" hidden></p>
+          <div class="modal-actions modal-actions-split">
+            <button type="button" id="deleteClassroomBtn" class="btn btn-danger">Delete</button>
+            <div class="modal-actions-right">
+              <button type="button" class="btn btn-ghost" data-close-modal="classroomModal">Cancel</button>
+              <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+          </div>
+        </form>
       </div>
     </div>
   </div>
 
-  <div id="toast" class="toast" hidden></div>
+  <div class="toast" id="toast" hidden></div>
 
-  <!-- Supabase client (UMD). config.js is generated at deploy time or created locally; if absent, the app runs in offline demo mode. -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <script src="config.js"></script>
   <script src="app.js"></script>

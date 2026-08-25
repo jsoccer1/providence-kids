@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Find My Class · Providence Kids</title>
+  <title>Class Finder · Providence Kids</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -31,25 +31,54 @@
   <main class="public-main">
     <section class="hero">
       <div class="container hero-inner">
-        <p class="eyebrow">Sunday Morning Check-In</p>
-        <h1 class="hero-title">Find your child’s class</h1>
-        <p class="hero-lede">Enter your child’s name and we’ll point you to the right room.</p>
+        <p class="eyebrow">Class Finder</p>
+        <h1 class="hero-title">Find a child's class</h1>
+        <p class="hero-lede">Enter a birthday or age, and we'll show the right room for this service.</p>
 
         <div class="lookup-card">
-          <label class="field-label" for="nameInput">Child’s name</label>
-          <div class="lookup-row">
-            <input id="nameInput" type="text" placeholder="e.g. John Smith" autocomplete="off">
-            <button id="findClassBtn" class="btn btn-primary">Find My Class</button>
+          <div class="mode-tabs" role="tablist" aria-label="Lookup method">
+            <button type="button" id="modeBirthdayBtn" class="mode-tab">By birthday</button>
+            <button type="button" id="modeAgeBtn" class="mode-tab">By age in months</button>
           </div>
+
+          <div id="birthdayField" class="field-wrap">
+            <label class="field-label" for="birthdayInput">Child's birthday</label>
+            <div class="lookup-row">
+              <input id="birthdayInput" type="date" autocomplete="off">
+              <button id="findClassBtn" class="btn btn-primary">Find My Class</button>
+            </div>
+          </div>
+
+          <div id="ageField" class="field-wrap" hidden>
+            <label class="field-label" for="ageInput">Age in months</label>
+            <div class="lookup-row">
+              <input id="ageInput" type="number" min="0" step="1" placeholder="e.g. 7" autocomplete="off">
+              <button class="btn btn-primary" onclick="document.getElementById('findClassBtn').click()">Find My Class</button>
+            </div>
+          </div>
+
           <div id="lookupResult" class="lookup-result" aria-live="polite"></div>
+
+          <div class="settings-panel">
+            <div class="setting-group">
+              <label class="field-label">Day</label>
+              <input type="range" id="daySlider" class="range-slider" min="0" max="1" step="1" value="1">
+              <div class="slider-labels" id="dayLabels"></div>
+            </div>
+            <div class="setting-group">
+              <label class="field-label">Service Time</label>
+              <input type="range" id="timeSlider" class="range-slider" min="0" max="2" step="1" value="0">
+              <div class="slider-labels" id="timeLabels"></div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
 
     <section class="class-list-section">
       <div class="container">
-        <h2 class="section-title">Our classrooms</h2>
-        <div id="publicClassList"></div>
+        <h2 class="section-title" id="publicClassListHeading">Classes</h2>
+        <div id="publicClassList" class="public-class-grid"></div>
       </div>
     </section>
   </main>
@@ -57,7 +86,6 @@
   <footer class="site-footer">
     <div class="container">
       <p>Providence Church · 6339 Glenwood Avenue, Raleigh, NC 27612</p>
-      <p class="footer-note">Demo application — sample data only.</p>
     </div>
   </footer>
 
