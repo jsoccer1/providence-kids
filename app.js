@@ -48,24 +48,6 @@
     return p[1] + "/" + p[2] + "/" + p[0];
   }
 
-  // Accepts "6/18/2024", "06-18-2024", "6.18.2024", or "2024-06-18".
-  // Returns ISO "YYYY-MM-DD" or null if not a real date.
-  function parseBirthdate(str) {
-    str = (str || "").trim();
-    var y, mo, d;
-    var m = str.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
-    if (m) { mo = +m[1]; d = +m[2]; y = +m[3]; }
-    else {
-      m = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-      if (m) { y = +m[1]; mo = +m[2]; d = +m[3]; }
-      else return null;
-    }
-    if (mo < 1 || mo > 12 || d < 1 || d > 31 || y < 1900) return null;
-    var dt = new Date(y, mo - 1, d);
-    if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
-    return y + "-" + pad2(mo) + "-" + pad2(d);
-  }
-
   function uid(prefix) {
     return prefix + "_" + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
   }
@@ -740,51 +722,12 @@
       sel.innerHTML = opts;
     }
 
-    var birthdateInput = document.getElementById("childBirthdate");
-    var birthdatePicker = document.getElementById("birthdatePicker");
-
     function updateAgePreview() {
-      var iso = parseBirthdate(birthdateInput.value);
-      if (iso) {
-        agePreview.textContent = "Age: " + monthsOld(iso) + " months";
-      } else {
-        agePreview.textContent = birthdateInput.value.trim() ? "Enter date as MM/DD/YYYY" : "";
-      }
+      var bd = document.getElementById("childBirthdate").value;
+      agePreview.textContent = bd ? "Age: " + monthsOld(bd) + " months" : "";
     }
 
-    // Auto-insert slashes while typing digits (but never fight backspace).
-    var lastBirthdateLen = 0;
-    birthdateInput.addEventListener("input", function () {
-      var v = birthdateInput.value;
-      if (v.length > lastBirthdateLen && /^\d{2}$/.test(v)) {
-        birthdateInput.value = v + "/";
-      } else if (v.length > lastBirthdateLen && /^\d{2}\/\d{2}$/.test(v)) {
-        birthdateInput.value = v + "/";
-      }
-      lastBirthdateLen = birthdateInput.value.length;
-      var iso = parseBirthdate(birthdateInput.value);
-      if (iso) birthdatePicker.value = iso;
-      updateAgePreview();
-    });
-
-    // Calendar button opens the native picker; picking a date fills the text box.
-    document.getElementById("birthdatePickerBtn").addEventListener("click", function () {
-      var iso = parseBirthdate(birthdateInput.value);
-      if (iso) birthdatePicker.value = iso;
-      birthdatePicker.max = todayISO();
-      if (birthdatePicker.showPicker) {
-        try { birthdatePicker.showPicker(); } catch (e) { birthdatePicker.focus(); }
-      } else {
-        birthdatePicker.focus();
-      }
-    });
-
-    birthdatePicker.addEventListener("change", function () {
-      if (!birthdatePicker.value) return;
-      birthdateInput.value = fmtDate(birthdatePicker.value);
-      lastBirthdateLen = birthdateInput.value.length;
-      updateAgePreview();
-    });
+    document.getElementById("childBirthdate").addEventListener("input", updateAgePreview);
 
     function openChildModal(childId, presetRoomId) {
       var kid = childId ? Store.child(childId) : null;
@@ -792,10 +735,8 @@
       document.getElementById("childSaveBtn").textContent = kid ? "Save Changes" : "Add Child";
       document.getElementById("childId").value = kid ? kid.id : "";
       document.getElementById("childName").value = kid ? kid.name : "";
-      document.getElementById("childBirthdate").value = kid ? fmtDate(kid.birthdate) : "";
-      birthdatePicker.value = kid ? kid.birthdate : "";
-      birthdatePicker.max = todayISO();
-      lastBirthdateLen = document.getElementById("childBirthdate").value.length;
+      document.getElementById("childBirthdate").value = kid ? kid.birthdate : "";
+      document.getElementById("childBirthdate").max = todayISO();
       document.getElementById("guardianName").value = kid ? kid.guardianName : "";
       document.getElementById("guardianEmail").value = kid ? kid.guardianEmail : "";
       document.getElementById("childNotes").value = kid ? (kid.notes || "") : "";
